@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # ffpwdcracker - Crack the passwords stored using Firefox browser. The script currently works only on Linux.
-#
+# Author : Pradeep Nayak (pradeep1288@gmail.com)
 # usage: ffpwdcracker [paths_to_location_of_files]
 # Run it with no paramters to extract the standard Passwords from all Profiles of the current
 # logged in User.
