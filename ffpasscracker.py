@@ -17,6 +17,8 @@ import glob
 import re
 import time
 import base64
+import getopt
+import getpass
 
 #Password structures
 class SECItem(Structure):
@@ -60,7 +62,13 @@ def readsignonDB(userpath,dbname):
 	if libnss.NSS_Init(userpath)!=0:
 		print """Error Initalizing NSS_Init,\n
 		propably no usefull results"""
+
 	print "Dirname: %s"%os.path.split(userpath)[-1]
+
+	keySlot = libnss.PK11_GetInternalKeySlot()
+	libnss.PK11_CheckUserPassword(keySlot, getpass.getpass() if use_pass else "")
+	libnss.PK11_Authenticate(keySlot, True, 0)
+
 	import sqlite3
 	conn = sqlite3.connect(userpath+os.sep+dbname)
 	c = conn.cursor()
@@ -83,13 +91,34 @@ def readsignonDB(userpath,dbname):
 
 
 ################# MAIN #################
-if len(sys.argv)==1:
+
+try:
+    optlist, args = getopt.getopt(sys.argv[1:], 'P')
+except getopt.GetoptError as err:
+    # print help information and exit:
+    print str(err) # will print something like "option -a not recognized"
+    usage()
+    sys.exit(2)
+
+
+if len(args)==0:
 	ordner = findpath_userdirs()
 else:
-	ordner=sys.argv[1:]
+	ordner=args
+
+use_pass = False
+for o, a in optlist:
+ 	if o == '-P':
+		use_pass = True
 
 #Load the libnss3 linked file
 libnss = CDLL("libnss3.so")
+
+# Set function profiles
+
+libnss.PK11_GetInternalKeySlot.restype=c_void_p
+libnss.PK11_CheckUserPassword.argtypes=[c_void_p, c_char_p]
+libnss.PK11_Authenticate.argtypes=[c_void_p, c_int, c_void_p]
 
 pwdata = secuPWData()
 pwdata.source = PW_NONE
