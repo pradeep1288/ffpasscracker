@@ -1,0 +1,13 @@
+ffpassdecrypt - Decode the passwords stored using Firefox browser. The script currently works only on Linux.
+
+Author : Pradeep Nayak (pradeep1288@gmail.com)
+usage: ./ffpassdecrypt.py [paths_to_location_of_files]
+
+Run it with no parameters to extract the standard passwords from all profiles of the current logged in user,
+or with an optional '-P' argument (before any path) to query the master password for decryption.
+
+Required files:
+   + key3.db
+   + signons.sqlite
+   + cert8.db
+are used and needed to collect the passwords.

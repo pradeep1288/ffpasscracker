@@ -1,16 +1,16 @@
 #!/usr/bin/env python
 """
-  ffpwdcracker - Crack the passwords stored using Firefox browser. The script currently works only on Linux.
+  ffpassdecrypt - Decode the passwords stored using Firefox browser. The script currently works only on Linux.
 
   Author : Pradeep Nayak (pradeep1288@gmail.com)
-  usage: ffpwdcracker [paths_to_location_of_files]
+  usage: ./ffpassdecrypt.py [paths_to_location_of_files]
 
-  Run it with no paramters to extract the standard Passwords from all Profiles of the current logged in User,
+  Run it with no parameters to extract the standard passwords from all profiles of the current logged in user,
   or with an optional '-P' argument (before any path) to query the master password for decryption.
 
   Required files:
      + key3.db
-     + signongs.sqlite
+     + signons.sqlite
      + cert8.db
   are used and needed to collect the passwords.
 
