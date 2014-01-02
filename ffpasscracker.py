@@ -1,14 +1,19 @@
 #!/usr/bin/env python
-# ffpwdcracker - Crack the passwords stored using Firefox browser. The script currently works only on Linux.
-# Author : Pradeep Nayak (pradeep1288@gmail.com)
-# usage: ffpwdcracker [paths_to_location_of_files]
-# Run it with no paramters to extract the standard Passwords from all Profiles of the current
-# logged in User.
-# Required files:
-#    + key3.db
-#    + signongs.sqlite 
-#    + cert8.db 
-# are used and needed to collect the passwords.
+"""
+  ffpwdcracker - Crack the passwords stored using Firefox browser. The script currently works only on Linux.
+
+  Author : Pradeep Nayak (pradeep1288@gmail.com)
+  usage: ffpwdcracker [paths_to_location_of_files]
+
+  Run it with no paramters to extract the standard Passwords from all Profiles of the current
+  logged in User.
+  Required files:
+     + key3.db
+     + signongs.sqlite
+     + cert8.db
+  are used and needed to collect the passwords.
+"""
+
 from ctypes import *
 import struct
 import sys
@@ -23,7 +28,7 @@ import getpass
 #Password structures
 class SECItem(Structure):
 	_fields_ = [('type',c_uint),('data',c_void_p),('len',c_uint)]
-		
+
 class secuPWData(Structure):
 	_fields_ = [('source',c_ubyte),('data',c_char_p)]
 
@@ -39,7 +44,7 @@ def findpath_userdirs():
 		if os.path.isdir(usersdir+os.sep+user):
 			res.append(usersdir+os.sep+user)
 	return res
-	
+
 def errorlog(row,path):
 	print "----[-]Error while Decoding! writting error.log:"
 	print libnss.PORT_GetError()
@@ -108,7 +113,7 @@ else:
 
 use_pass = False
 for o, a in optlist:
- 	if o == '-P':
+	if o == '-P':
 		use_pass = True
 
 #Load the libnss3 linked file
