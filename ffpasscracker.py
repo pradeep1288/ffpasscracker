@@ -5,16 +5,22 @@
   Author : Pradeep Nayak (pradeep1288@gmail.com)
   usage: ffpwdcracker [paths_to_location_of_files]
 
-  Run it with no paramters to extract the standard Passwords from all Profiles of the current
-  logged in User.
+  Run it with no paramters to extract the standard Passwords from all Profiles of the current logged in User,
+  or with an optional '-P' argument (before any path) to query the master password for decryption.
+
   Required files:
      + key3.db
      + signongs.sqlite
      + cert8.db
   are used and needed to collect the passwords.
+
 """
 
-from ctypes import *
+from ctypes import (
+	CDLL,
+	Structure,
+	c_int, c_uint, c_void_p, c_char_p, c_ubyte,
+	cast, byref, string_at)
 import struct
 import sys
 import os
@@ -25,15 +31,16 @@ import base64
 import getopt
 import getpass
 
-#Password structures
+# Password structures
 class SECItem(Structure):
 	_fields_ = [('type',c_uint),('data',c_void_p),('len',c_uint)]
 
 class secuPWData(Structure):
 	_fields_ = [('source',c_ubyte),('data',c_char_p)]
 
-(SECWouldBlock,SECFailure,SECSuccess)=(-2,-1,0)
-(PW_NONE,PW_FROMFILE,PW_PLAINTEXT,PW_EXTERNAL)=(0,1,2,3)
+(SECWouldBlock, SECFailure, SECSuccess) = (-2,-1,0)
+(PW_NONE, PW_FROMFILE, PW_PLAINTEXT, PW_EXTERNAL) = (0,1,2,3)
+
 
 def findpath_userdirs():
 	appdata = os.getenv('HOME')
@@ -45,7 +52,7 @@ def findpath_userdirs():
 			res.append(usersdir+os.sep+user)
 	return res
 
-def errorlog(row,path):
+def errorlog(row, path, libnss):
 	print "----[-]Error while Decoding! writting error.log:"
 	print libnss.PORT_GetError()
 	try:
@@ -62,8 +69,8 @@ def errorlog(row,path):
 
 
 
-#reads the signons.sqlite which is a sqlite3 Database (>Firefox 3)
-def readsignonDB(userpath,dbname):
+# reads the signons.sqlite which is a sqlite3 Database (>Firefox 3)
+def readsignonDB(userpath, dbname, use_pass, libnss):
 	if libnss.NSS_Init(userpath)!=0:
 		print """Error Initalizing NSS_Init,\n
 		propably no usefull results"""
@@ -73,6 +80,14 @@ def readsignonDB(userpath,dbname):
 	keySlot = libnss.PK11_GetInternalKeySlot()
 	libnss.PK11_CheckUserPassword(keySlot, getpass.getpass() if use_pass else "")
 	libnss.PK11_Authenticate(keySlot, True, 0)
+
+	uname = SECItem()
+	passwd = SECItem()
+	dectext = SECItem()
+
+	pwdata = secuPWData()
+	pwdata.source = PW_NONE
+	pwdata.data = 0
 
 	import sqlite3
 	conn = sqlite3.connect(userpath+os.sep+dbname)
@@ -85,10 +100,10 @@ def readsignonDB(userpath,dbname):
 		passwd.data = cast(c_char_p(base64.b64decode(row[7])),c_void_p)
 		passwd.len=len(base64.b64decode(row[7]))
 		if libnss.PK11SDR_Decrypt(byref(uname),byref(dectext),byref(pwdata))==-1:
-			errorlog(row,userpath+os.sep+dbname)
+			errorlog(row, userpath+os.sep+dbname, libnss)
 		print "----Username %s" % string_at(dectext.data,dectext.len)
 		if libnss.PK11SDR_Decrypt(byref(passwd),byref(dectext),byref(pwdata))==-1:
-			errorlog(row,userpath+os.sep+dbname)
+			errorlog(row, userpath+os.sep+dbname, libnss)
 		print "----Password %s" % string_at(dectext.data,dectext.len)
 	c.close()
 	conn.close()
@@ -96,50 +111,46 @@ def readsignonDB(userpath,dbname):
 
 
 ################# MAIN #################
+def main():
 
-try:
-    optlist, args = getopt.getopt(sys.argv[1:], 'P')
-except getopt.GetoptError as err:
-    # print help information and exit:
-    print str(err) # will print something like "option -a not recognized"
-    usage()
-    sys.exit(2)
+	try:
+		optlist, args = getopt.getopt(sys.argv[1:], 'P')
+	except getopt.GetoptError as err:
+		# print help information and exit:
+		print str(err) # will print something like "option -a not recognized"
+		usage()
+		sys.exit(2)
 
 
-if len(args)==0:
-	ordner = findpath_userdirs()
-else:
-	ordner=args
+	if len(args)==0:
+		ordner = findpath_userdirs()
+	else:
+		ordner=args
 
-use_pass = False
-for o, a in optlist:
-	if o == '-P':
-		use_pass = True
+	use_pass = False
+	for o, a in optlist:
+		if o == '-P':
+			use_pass = True
 
-#Load the libnss3 linked file
-libnss = CDLL("libnss3.so")
+	# Load the libnss3 linked file
+	libnss = CDLL("libnss3.so")
 
-# Set function profiles
+	# Set function profiles
 
-libnss.PK11_GetInternalKeySlot.restype=c_void_p
-libnss.PK11_CheckUserPassword.argtypes=[c_void_p, c_char_p]
-libnss.PK11_Authenticate.argtypes=[c_void_p, c_int, c_void_p]
+	libnss.PK11_GetInternalKeySlot.restype = c_void_p
+	libnss.PK11_CheckUserPassword.argtypes = [c_void_p, c_char_p]
+	libnss.PK11_Authenticate.argtypes = [c_void_p, c_int, c_void_p]
 
-pwdata = secuPWData()
-pwdata.source = PW_NONE
-pwdata.data=0
+	for user in ordner:
+		signonfiles = glob.glob(user+os.sep+"signons*.*")
+		for signonfile in signonfiles:
+			(filepath,filename) = os.path.split(signonfile)
+			filetype = re.findall('\.(.*)',filename)[0]
+			if filetype.lower() == "sqlite":
+				readsignonDB(filepath, filename, use_pass, libnss)
+			else:
+				print "Unhandled Signons File: %s" % filename
+				print "Skipping"
 
-uname = SECItem()
-passwd = SECItem()
-dectext = SECItem()
-
-for user in ordner:
-	signonfiles = glob.glob(user+os.sep+"signons*.*")
-	for signonfile in signonfiles:
-		(filepath,filename) = os.path.split(signonfile)
-		filetype = re.findall('\.(.*)',filename)[0]
-		if filetype.lower() == "sqlite":
-			readsignonDB(filepath,filename)
-		else:
-			print "Unhandled Signons File: %s" % filename
-			print "Skipping"
+if __name__ == '__main__':
+	main()
