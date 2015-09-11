@@ -21,6 +21,7 @@ from ctypes import (
 	Structure,
 	c_int, c_uint, c_void_p, c_char_p, c_ubyte,
 	cast, byref, string_at)
+from ctypes.util import find_library
 import struct
 import sys
 import os
@@ -59,9 +60,9 @@ def errorlog(row, path, libnss):
 		f=open('error.log','a')
 		f.write("-------------------\n")
 		f.write("#ERROR in: %s at %s\n" %(path,time.ctime()))
-		f.write("Site: %s\n"%row[1])
-		f.write("Username: %s\n"%row[6])
-		f.write("Password: %s\n"%row[7])
+		f.write("Site: %s\n"%row['hostname'])
+		f.write("Username: %s\n"%row['encryptedUsername'])
+		f.write("Password: %s\n"%row['encryptedPassword'])
 		f.write("-------------------\n")
 		f.close()
 	except IOError:
@@ -93,10 +94,20 @@ class SQLiteLogins(object):
 
 	def __iter__(self):
 		for row in self._cur:
-			yield {"hostname": row[1], 'encryptedUsername': row[6], 'encryptedPassword': row[7]}
+			yield { 'hostname': row[1],
+				'encryptedUsername': row[6],
+				'encryptedPassword': row[7],
+				'timeCreated' : row[10],
+				'timeLastUsed' : row[11],
+				'timePasswordChanged' : row[12]}
 
 def decrypt(val, libnss, pwdata):
-	item_bytes = base64.b64decode(val)
+	try:
+		item_bytes = base64.b64decode(val)
+	except TypeError as msg:
+		print "--TypeError (%s) val  (%s)"%(msg,val)
+		return None
+
 	item_sec = SECItem()
 	item_clr = SECItem()
 
@@ -181,7 +192,7 @@ def main():
 			use_pass = True
 
 	# Load the libnss3 linked file
-	libnss = CDLL("libnss3.so")
+	libnss = CDLL(find_library("nss3"))
 
 	# Set function profiles
 
