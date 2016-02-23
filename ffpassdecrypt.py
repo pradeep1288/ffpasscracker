@@ -10,7 +10,7 @@
 
   Required files:
      + key3.db
-     + signons.sqlite
+     + signons.sqlite / logins.json
      + cert8.db
   are used and needed to collect the passwords.
 
@@ -21,6 +21,7 @@ from ctypes import (
 	Structure,
 	c_int, c_uint, c_void_p, c_char_p, c_ubyte,
 	cast, byref, string_at)
+from ctypes.util import find_library
 import struct
 import sys
 import os
@@ -44,7 +45,7 @@ class secuPWData(Structure):
 
 def findpath_userdirs():
 	appdata = os.getenv('HOME')
-	usersdir = appdata+os.sep+".mozilla"+os.sep+'firefox'
+	usersdir = os.path.join(appdata, '.mozilla', 'firefox')
 	userdir = os.listdir(usersdir)
 	res=[]
 	for user in userdir:
@@ -59,56 +60,114 @@ def errorlog(row, path, libnss):
 		f=open('error.log','a')
 		f.write("-------------------\n")
 		f.write("#ERROR in: %s at %s\n" %(path,time.ctime()))
-		f.write("Site: %s\n"%row[1])
-		f.write("Username: %s\n"%row[6])
-		f.write("Password: %s\n"%row[7])
+		f.write("Site: %s\n"%row['hostname'])
+		f.write("Username: %s\n"%row['encryptedUsername'])
+		f.write("Password: %s\n"%row['encryptedPassword'])
 		f.write("-------------------\n")
 		f.close()
 	except IOError:
 		print "Error while writing logfile - No log created!"
 
 
+class JSONLogins(object):
+
+	def __init__(self, dbpath):
+		import json
+
+		with open(dbpath) as fh:
+			try:
+				self._data = json.load(fh)
+			except Exception as Error:
+				raise RuntimeError("Failed to read %s (%s)" %
+						   (Database, Error))
+
+	def __iter__(self):
+		return self._data['logins'].__iter__()
+
+class SQLiteLogins(object):
+
+	def __init__(self, dbpath):
+		import sqlite3
+		self._conn = sqlite3.connect(dbpath)
+		self._cur = self._conn.cursor()
+		self._cur.execute('SELECT * FROM moz_logins;')
+
+	def __iter__(self):
+		for row in self._cur:
+			yield { 'hostname': row[1],
+				'encryptedUsername': row[6],
+				'encryptedPassword': row[7],
+				'timeCreated' : row[10],
+				'timeLastUsed' : row[11],
+				'timePasswordChanged' : row[12]}
+
+def decrypt(val, libnss, pwdata):
+	try:
+		item_bytes = base64.b64decode(val)
+	except TypeError as msg:
+		print "--TypeError (%s) val  (%s)"%(msg,val)
+		return None
+
+	item_sec = SECItem()
+	item_clr = SECItem()
+
+	item_sec.data = cast(c_char_p(item_bytes),c_void_p)
+	item_sec.len = len(item_bytes)
+
+	if libnss.PK11SDR_Decrypt(byref(item_sec), byref(item_clr), byref(pwdata))==-1:
+		return None
+	else:
+		return string_at(item_clr.data, item_clr.len)
+
 
 # reads the signons.sqlite which is a sqlite3 Database (>Firefox 3)
-def readsignonDB(userpath, dbname, use_pass, libnss):
-	if libnss.NSS_Init(userpath)!=0:
-		print """Error Initalizing NSS_Init,\n
-		propably no usefull results"""
-
-	print "Dirname: %s"%os.path.split(userpath)[-1]
+def readsignonDB(userpath, dbname, pw, libnss):
+	print "\nDatabase %s" % dbname
+        dbpath = os.path.join(userpath, dbname)
 
 	keySlot = libnss.PK11_GetInternalKeySlot()
-	libnss.PK11_CheckUserPassword(keySlot, getpass.getpass() if use_pass else "")
+	libnss.PK11_CheckUserPassword(keySlot, pw)
 	libnss.PK11_Authenticate(keySlot, True, 0)
-
-	uname = SECItem()
-	passwd = SECItem()
-	dectext = SECItem()
 
 	pwdata = secuPWData()
 	pwdata.source = PW_NONE
 	pwdata.data = 0
 
-	import sqlite3
-	conn = sqlite3.connect(userpath+os.sep+dbname)
-	c = conn.cursor()
-	c.execute("SELECT * FROM moz_logins;")
-	for row in c:
-		print "--Site(%s):"%row[1]
-		uname.data  = cast(c_char_p(base64.b64decode(row[6])),c_void_p)
-		uname.len = len(base64.b64decode(row[6]))
-		passwd.data = cast(c_char_p(base64.b64decode(row[7])),c_void_p)
-		passwd.len=len(base64.b64decode(row[7]))
-		if libnss.PK11SDR_Decrypt(byref(uname),byref(dectext),byref(pwdata))==-1:
-			errorlog(row, userpath+os.sep+dbname, libnss)
-		print "----Username %s" % string_at(dectext.data,dectext.len)
-		if libnss.PK11SDR_Decrypt(byref(passwd),byref(dectext),byref(pwdata))==-1:
-			errorlog(row, userpath+os.sep+dbname, libnss)
-		print "----Password %s" % string_at(dectext.data,dectext.len)
-	c.close()
-	conn.close()
-	libnss.NSS_Shutdown()
+	ext = dbname.split('.')[-1]
+	if ext == 'sqlite':
+		db = SQLiteLogins(dbpath)
+	elif ext == 'json':
+		db = JSONLogins(dbpath)
 
+	for rec in db:
+		print "--Site(%s):" % rec['hostname']
+
+		for item in ['Username', 'Password']:
+			clr = decrypt(rec['encrypted%s' % item], libnss, pwdata)
+			if clr is None:
+				errorlog(rec, dbpath, libnss)
+			else:
+				print "----%s %s" % (item, clr)
+
+
+		# Additional items from the JSON database
+
+		for item in ['timeCreated', 'timeLastUsed', 'timePasswordChanged']:
+			if item in rec:
+				print "----%s %s" % (item, time.strftime("%Y-%m-%dT%H:%M:%S",time.localtime((rec[item]) / 1000)))
+
+
+class LibNSS(object):
+	def __init__(self, libnss, userpath):
+		self._libnss = libnss
+		if self._libnss.NSS_Init(userpath)!=0:
+			raise RuntimeError("libnss init error")
+
+	def __enter__(self):
+		return self
+
+	def __exit__(self, ExcType, ExcVal, ExcTb):
+		self._libnss.NSS_Shutdown()
 
 ################# MAIN #################
 def main():
@@ -133,7 +192,7 @@ def main():
 			use_pass = True
 
 	# Load the libnss3 linked file
-	libnss = CDLL("libnss3.so")
+	libnss = CDLL(find_library("nss3"))
 
 	# Set function profiles
 
@@ -142,15 +201,16 @@ def main():
 	libnss.PK11_Authenticate.argtypes = [c_void_p, c_int, c_void_p]
 
 	for user in ordner:
-		signonfiles = glob.glob(user+os.sep+"signons*.*")
-		for signonfile in signonfiles:
-			(filepath,filename) = os.path.split(signonfile)
-			filetype = re.findall('\.(.*)',filename)[0]
-			if filetype.lower() == "sqlite":
-				readsignonDB(filepath, filename, use_pass, libnss)
-			else:
-				print "Unhandled Signons File: %s" % filename
-				print "Skipping"
+		print "Dirname: %s"%os.path.split(user)[-1]
+
+		signonfiles = glob.glob(os.path.join(user, 'signons*.sqlite')) + \
+			[os.path.join(user, 'logins.json')]
+
+		pw = getpass.getpass() if use_pass else ""
+		with LibNSS(libnss, user):
+			for signonfile in signonfiles:
+				(filepath,filename) = os.path.split(signonfile)
+				readsignonDB(filepath, filename, pw, libnss)
 
 if __name__ == '__main__':
 	main()
